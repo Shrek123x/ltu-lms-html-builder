@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Link from "next/link" // Remove unused import
+import Nav from "./components/nav";
 
 export const metadata: Metadata = {
   title: "LTU LMS HTML Builder",
@@ -18,9 +19,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }):
         <header aria-label="Site Header" className="site-header">
           <div className="brand">
             <span className="student" aria-label="studentNumber">{studentNumber}</span>
+            <span className="student-name" aria-label="studentName">{studentName}</span>
             <Link href="/" className="logo">LTU Builder</Link>
-            // add studentName later
           </div>
+          <Nav />
         </header>
         <main id="content" className="container" role="main">{children}</main>
         <footer className="site-footer" role="contentinfo">
