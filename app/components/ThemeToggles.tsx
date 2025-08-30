@@ -22,5 +22,5 @@ export default function ThemeToggle() {
         setTheme(next); localStorage.setItem("theme", next); apply(next);
     }
     
-    return <button onClick={click} aria-label="Toggle theme">Theme: {theme}</button>
+    return <button onClick={cycle} aria-label="Toggle theme">Theme: {theme}</button>
 }
