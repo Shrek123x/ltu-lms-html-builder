@@ -60,7 +60,7 @@ export default function HomePage() {
     document.body.removeChild(link);
     URL.revokeObjectURL(link.href);
   }
-
+// This section was assisted by github copilot
   return (
     <main style={{ minHeight: "80vh", display: "flex", alignItems: "flex-start", justifyContent: "flex-start", background: "var(--theme-bg, #f8f9fa)" }}>
       <div style={{ maxWidth: 600, width: "100%", background: "var(--theme-card, #fff)", borderRadius: 12, boxShadow: "0 2px 16px rgba(0,0,0,0.08)", padding: "2rem", margin: "2rem 0 2rem 2rem" }}>
