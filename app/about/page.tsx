@@ -1,4 +1,4 @@
-import Breadcrumbs from "../breadcrumbs";
+import Breadcrumbs from "../components/breadcrumbs";
 
 export default function AboutPage() {
     return (

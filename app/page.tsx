@@ -1,103 +1,155 @@
-import Image from "next/image";
 
-export default function Home() {
+"use client";
+import { useState } from "react";
+
+function generateTabsHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tabs Example</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .tab-btn { display: inline-block; padding: 8px 16px; border: 1px solid #ccc; background: #eee; cursor: pointer; margin-right: 4px; }
+    .tab-btn.active { background: #fff; border-bottom: none; }
+    .tab-content { border: 1px solid #ccc; padding: 16px; margin-top: -1px; }
+  </style>
+</head>
+<body>
+  <div>
+    <button class="tab-btn active" onclick="showTab(0)">Tab 1</button>
+    <button class="tab-btn" onclick="showTab(1)">Tab 2</button>
+    <button class="tab-btn" onclick="showTab(2)">Tab 3</button>
+  </div>
+  <div id="tab-contents">
+    <div class="tab-content" style="display:block;">Content for Tab 1</div>
+    <div class="tab-content" style="display:none;">Content for Tab 2</div>
+    <div class="tab-content" style="display:none;">Content for Tab 3</div>
+  </div>
+  <script>
+    function showTab(idx) {
+      var btns = document.querySelectorAll('.tab-btn');
+      var contents = document.querySelectorAll('.tab-content');
+      btns.forEach((btn, i) => {
+        btn.classList.toggle('active', i === idx);
+        contents[i].style.display = i === idx ? 'block' : 'none';
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+export default function HomePage() {
+  const [output, setOutput] = useState(generateTabsHTML());
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(output);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function handleDownload() {
+    const blob = new Blob([output], { type: 'text/html' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'hello.html';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main style={{ minHeight: "80vh", display: "flex", alignItems: "flex-start", justifyContent: "flex-start", background: "var(--theme-bg, #f8f9fa)" }}>
+      <div style={{ maxWidth: 600, width: "100%", background: "var(--theme-card, #fff)", borderRadius: 12, boxShadow: "0 2px 16px rgba(0,0,0,0.08)", padding: "2rem", margin: "2rem 0 2rem 2rem" }}>
+        <h1 style={{ marginBottom: "1rem", color: "var(--theme-text, #222)" }}>Tabs HTML5 Generator</h1>
+        <p style={{ marginBottom: "2rem", color: "var(--theme-subtext, #555)" }}>
+          This tool generates standalone HTML5 + JS with inline CSS for a tabs widget.<br />
+          Copy and paste this code into Moodle or a <code>.html</code> file, or download as <code>hello.html</code>.
+        </p>
+        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', justifyContent: 'flex-start' }}>
+          <button
+            onClick={handleCopy}
+            style={{
+              padding: '0.75rem 1.25rem',
+              borderRadius: 8,
+              border: 'none',
+              background: 'var(--theme-btn, #007bff)',
+              color: 'var(--theme-btn-text, #fff)',
+              fontWeight: 700,
+              fontSize: '1.05em',
+              letterSpacing: '0.01em',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
+            }}
+            aria-label="Copy generated code to clipboard"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            {copied ? 'Copied!' : 'Copy to Clipboard'}
+          </button>
+          <button
+            onClick={handleDownload}
+            style={{
+              padding: '0.75rem 1.25rem',
+              borderRadius: 8,
+              border: 'none',
+              background: 'var(--theme-btn-alt, #28a745)',
+              color: 'var(--theme-btn-text, #fff)',
+              fontWeight: 700,
+              fontSize: '1.05em',
+              letterSpacing: '0.01em',
+              boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
+            }}
+            aria-label="Download generated code as hello.html"
           >
-            Read our docs
-          </a>
+            Download hello.html
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+        <textarea
+          value={output}
+          readOnly
+          rows={18}
+          style={{
+            width: "100%",
+            fontFamily: "monospace",
+            fontSize: "1em",
+            borderRadius: 8,
+            border: "1px solid #bbb",
+            padding: "1em",
+            marginBottom: "1em",
+            background: "var(--theme-code-bg, #f6f6f6)",
+            color: "var(--theme-code-text, #222)",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.04)"
+          }}
+          aria-label="Generated HTML code"
+        />
+        <style>{`
+          :root {
+            --theme-bg: #f8f9fa;
+            --theme-card: #fff;
+            --theme-text: #222;
+            --theme-subtext: #555;
+            --theme-code-bg: #f6f6f6;
+            --theme-code-text: #222;
+            --theme-btn: #007bff;
+            --theme-btn-text: #fff;
+          }
+          [data-theme="dark"] {
+            --theme-bg: #181a1b;
+            --theme-card: #23272b;
+            --theme-text: #f6f6f6;
+            --theme-subtext: #ccc;
+            --theme-code-bg: #23272b;
+            --theme-code-text: #f6f6f6;
+            --theme-btn: #0056b3;
+            --theme-btn-text: #fff;
+          }
+        `}</style>
+      </div>
+    </main>
   );
 }
