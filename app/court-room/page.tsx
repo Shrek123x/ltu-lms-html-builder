@@ -1,11 +1,14 @@
 import Breadcrumbs from "../components/breadcrumbs";
+import CourtRoom from "./Courtroom";
 
 export default function CourtRoomPage() {
     return (
         <section>
             <h1>Court Room</h1>
             <Breadcrumbs />
-            <p>Feature coming soon: this is a place holder to prove routing and navigation</p>
+        <main style={{ padding: 16 }}>
+            <CourtRoom />
+        </main>
         </section>
-    );
+    )
 }
