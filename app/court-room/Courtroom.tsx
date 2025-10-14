@@ -12,12 +12,42 @@ import React, { useEffect, useRef, useState} from "react";
  * 
  */
 
+/* data types */
+
+type MessageLevel = "info" | "warning" | "urgent";
+
 type Message = {
-    id: string;
-    text: string;
-    from: string;
-    level?: "info" | "warning" | "urgent";
-    timestamp: number;};
+    id: string;             //stable id for React keys and dedupe
+    text: string;           //message body
+    from?: string;          // who sent the message
+    level: MessageLevel;    //Severity of the message
+    timestamp: number;      //created at (ms)
+    resolved?: boolean;     // true when user resolves the issue
+    escalations?: number;  //how many times we've escalated/reminded 
+    nextRemindAt?: number; // ms timestamp for next reminder/escalation check
+};
+
+// Confiqureation 
+const DEMO_REMIND_MIN_MS = 20_000; // 20 SECs (demo)
+const DEMO_REMIND_MAX_MS = 30_000; // 30 SECs (demo)
+const ESCALATION_STEPS = ["info", "warning", "urgent"] as const; // escalation order
+
+//generate a reasonable unique ID (timestamp + random)
+function genID(prefix = "msg") {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// pick a random ms between min and max (INCLUSIVE)
+function randBetween(min: number, max: number) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// returns the next level after current, or same if already at top
+function escalateLevel(level: MessageLevel): MessageLevel {
+    const idx = ESCALATION_STEPS.indexOf(level);
+    const nextIdx = Math.min(idx + 1, ESCALATION_STEPS.length - 1);
+    return ESCALATION_STEPS[nextIdx] as MessageLevel;
+}
 
 export default function CourtRoom() {
     // timerSeconds holds the remaining seconds when the timer is running (enabled)
@@ -31,6 +61,10 @@ export default function CourtRoom() {
     const [message, setMessages] = useState<Message[]>([]);
     //ref to store intervals id so we can clear it
     const intervalRef = useRef<number | null>(null);
+    //Court overlay state (shows when an urgent, unresolved message triggers it)
+    const [courtOverlay, setCourtOverlay] = useState<{ show: boolean; reason?: string }>({ show: false });
+    // Schedular ticking interval ref (seperate from timer)
+    const schedulerRef = useRef<number | null>(null);
 
     // helper to format seconds to mm:ss
     function formatTime(totalSeconds: number) {
@@ -56,7 +90,7 @@ export default function CourtRoom() {
     //stopTimer stops the ticking and clears interval
     function stopTimer() {
         setRunning(false);
-        if (intervalRef.current != null) {
+        if (intervalRef.current !== null) {
             window.clearInterval(intervalRef.current);
             intervalRef.current = null;
         }
@@ -69,6 +103,7 @@ export default function CourtRoom() {
         setMessages([]);
         setInputMinutes('0');
         setInputSeconds("30");
+        setCourtOverlay({ show: false });
     }
 
     // Tick effect: when running, setIntervals reduces timerSeconds every second
@@ -87,11 +122,10 @@ export default function CourtRoom() {
                         setRunning(false);
                         // add message to show the timer is finished
                         addMessage({
-                            id: String(Date.now()),
+                            id: genID("sys"),
                             text: "Timer Finished",
                             from: "system",
                             level: "info",
-                            timestamp: Date.now(),
                         });
                         return 0;
                     }
@@ -113,14 +147,79 @@ export default function CourtRoom() {
     // helper to add a message to the list
     function addMessage(msg: Omit<Message, "timestamp"> & Partial<Pick<Message, "timestamp">>) {
         const m: Message = {
-            id: msg.id,
+            id: msg.id || genID("msg"),
             text: msg.text,
-            from: msg.from,
+            from: msg.from ?? "system",
             level: msg.level ?? "info",
             timestamp: msg.timestamp ?? Date.now(),
+            resolved: msg.resolved ?? false,
+            escalations: msg.escalations ?? 0,
+            nextRemindAt: Date.now() + randBetween(DEMO_REMIND_MIN_MS, DEMO_REMIND_MAX_MS),
         };
-        setMessages((prev) => [m, ...prev].slice(0, 50)); // keep up to 50 messages
+        setMessages((prev) => {
+        // remove any existing message with same id, then prepend the new one
+        const filtered = prev.filter((x) => x.id !== m.id);
+        return [m, ...filtered].slice(0, 100); // limit to 100 messages
+        });
     }
+
+    // resolve a message (user action) -> prevent further reminders for that messge
+    function resolveMessage(id: string) {
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, resolved: true} : m)))
+    }
+    useEffect(() => {
+        // Run scheduler only when component mounts — keep it independent of timer running
+        if (schedulerRef.current !== null) return;
+
+        schedulerRef.current = window.setInterval(() => {
+        const now = Date.now();
+
+        setMessages((prev) => {
+            let changed = false;
+            const next = prev.map((m) => {
+            // skip resolved messages
+            if (m.resolved) return m;
+
+            // if there's no nextRemindAt or it's in the future, do nothing
+            if (!m.nextRemindAt || m.nextRemindAt > now) return m;
+
+            // At this point: reminder time reached and message not resolved
+            const escalations = (m.escalations ?? 0) + 1;
+            const newLevel = escalateLevel(m.level);
+
+            // Build updated message
+            const updated: Message = {
+                ...m,
+                level: newLevel,
+                escalations,
+                // schedule next reminder (unless already urgent)
+                nextRemindAt: newLevel === "urgent" ? undefined : now + randBetween(DEMO_REMIND_MIN_MS, DEMO_REMIND_MAX_MS),
+            };
+
+            changed = true;
+
+            // If we reached urgent and message still unresolved, trigger court overlay
+            if (newLevel === "urgent") {
+                // Show the court overlay with reason — use side effect after state update
+                setTimeout(() => {
+                setCourtOverlay({ show: true, reason: `Court action: ${updated.text}` });
+                }, 50);
+            }
+
+            return updated;
+            });
+
+            return changed ? next : prev;
+        });
+        }, 1000); // check every second
+
+        return () => {
+        if (schedulerRef.current !== null) {
+            window.clearInterval(schedulerRef.current);
+            schedulerRef.current = null;
+        }
+        };
+    }, []);
 
     //quick demo helper: add a sample message (manly used for debugging)
     function addSampleMessages() {
