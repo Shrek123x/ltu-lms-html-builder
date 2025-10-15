@@ -285,6 +285,7 @@ export default function CourtRoom() {
   /* Messages and scheduler */
   const [messages, setMessages] = useState<Message[]>([]);
   const schedulerRef = useRef<number | null>(null);
+  const lastCodingChallengeTimeRef = useRef<number>(0); // Track last coding challenge injection time
 
   /* Stage state */
   const [stageIndex, setStageIndex] = useState<number>(0); // index into STAGES
@@ -302,6 +303,10 @@ export default function CourtRoom() {
   const [userCode, setUserCode] = useState<string>("");
   const [selectedMessageForDebug, setSelectedMessageForDebug] = useState<string | null>(null);
   const [debugFeedback, setDebugFeedback] = useState<string>("");
+  const [showAnswer, setShowAnswer] = useState<boolean>(false);
+  
+  /* Track resolved message IDs to prevent re-injection */
+  const [resolvedMessageIds, setResolvedMessageIds] = useState<Set<string>>(new Set());
 
   /* ------------------------
      Timer logic
@@ -318,6 +323,10 @@ export default function CourtRoom() {
     const total = mins * 60 + secs;
     setTimerSeconds(total);
     setRunning(true);
+    // Initialize coding challenge timer when starting
+    if (lastCodingChallengeTimeRef.current === 0) {
+      lastCodingChallengeTimeRef.current = Date.now();
+    }
   }
 
   function stopTimer() {
@@ -335,6 +344,9 @@ export default function CourtRoom() {
     setInputMinutes("0");
     setInputSeconds("30");
     setOverlay({ show: false });
+    setResolvedMessageIds(new Set()); // Clear resolved tracking on full reset
+    lastCodingChallengeTimeRef.current = 0; // Reset coding challenge timer
+    cancelDebugging(); // Close debug interface
   }
 
   useEffect(() => {
@@ -372,7 +384,7 @@ export default function CourtRoom() {
       };
     }
     return;
-  }, [running]);
+  }, [running, resolvedMessageIds]);
 
   /* ------------------------
      Message operations
@@ -411,21 +423,37 @@ export default function CourtRoom() {
   }
 
   // Mark a message as resolved (stops all future reminders and court actions)
+  // Also tracks the message text to prevent re-injection
   function resolveMessage(id: string) {
-    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, resolved: true, nextRemindAt: undefined, courtAt: undefined } : m)));
+    setMessages((prev) => prev.map((m) => {
+      if (m.id === id) {
+        // Add to resolved tracking to prevent re-injection
+        setResolvedMessageIds((prevIds) => new Set(prevIds).add(m.text));
+        return { ...m, resolved: true, nextRemindAt: undefined, courtAt: undefined };
+      }
+      return m;
+    }));
   }
 
   /* ------------------------
      Scheduler:
-     REQUIREMENT: Messages every 20-30 seconds + escalation with 2-minute waits
+     REQUIREMENT: Coding challenges every 20 seconds, other messages random
      
      VERY COMPLEX SECTION (ChatGPT heavily assisted with scheduler logic and state management)
      
      How it works:
-     1) Message injection:
-        - Every second, ~3% chance to add a new message from current stage pool
-        - This gives roughly 1 message every ~30 seconds on average
-        - Messages start at "info" level with nextRemindAt scheduled (20-30s from now)
+     1) Message injection (two types):
+        a) CODING CHALLENGES: Injected exactly every 20 seconds when timer is running
+           - Messages with code challenges: "Fix alt in img1", "Fix input validation", etc.
+           - Guaranteed to appear on schedule (not random)
+           - Only if not already resolved
+        
+        b) OTHER MESSAGES: Random injection (~3% per second for boss/family/etc.)
+           - Messages without code challenges: "Are you done with sprint 1?", "Pick up kids", etc.
+           - Random appearance gives variety
+           - This gives roughly 1 random message every ~30 seconds on average
+        
+        - All messages start at "info" level with nextRemindAt scheduled (20-30s from now)
      
      2) Escalation policy (checked every second):
         - When nextRemindAt passes and message still unresolved:
@@ -444,7 +472,7 @@ export default function CourtRoom() {
         - "bankruptcy": Court + app disabled (business collapse, no revenue)
      
      LEARNING NOTE: useEffect with cleanup function prevents memory leaks
-     The dependency array [stageIndex] ensures scheduler restarts when stage changes
+     The dependency array ensures scheduler restarts when dependencies change
      
      See: triggerConsequenceOverlay() for overlay content
      ------------------------ */
@@ -455,23 +483,77 @@ export default function CourtRoom() {
     schedulerRef.current = window.setInterval(() => {
       const now = Date.now();
 
-      // 1) RANDOM MESSAGE INJECTION (ChatGPT assisted with probability calculation)
-      // Periodically inject a new message from the current stage (demo)
+      // 1a) CODING CHALLENGE INJECTION - Every 20 seconds (ChatGPT assisted)
+      // REQUIREMENT: Coding challenges appear every 20 seconds when timer is running
+      // These are guaranteed to appear on schedule (not random)
+      if (running) {
+        const timeSinceLastChallenge = now - lastCodingChallengeTimeRef.current;
+        
+        // Check if 20 seconds have passed since last coding challenge
+        if (timeSinceLastChallenge >= 20000) {
+          const pool = STAGES[stageIndex].messages;
+          
+          // Filter to only messages with code challenges
+          const codingMessages = pool.filter(msg => 
+            CODE_CHALLENGES.some(challenge => 
+              msg.text.toLowerCase().includes(challenge.messageKeyword.toLowerCase())
+            )
+          );
+          
+          // Pick a random coding challenge that hasn't been resolved
+          const unresolvedCodingMessages = codingMessages.filter(msg => !resolvedMessageIds.has(msg.text));
+          
+          if (unresolvedCodingMessages.length > 0) {
+            const pick = unresolvedCodingMessages[Math.floor(Math.random() * unresolvedCodingMessages.length)];
+            
+            addMessage({
+              id: genId("coding"),
+              text: pick.text,
+              from: pick.from,
+              level: "info",
+              consequence: pick.consequence,
+            });
+            
+            lastCodingChallengeTimeRef.current = now; // Update last challenge time
+          }
+        }
+      }
+
+      // 1b) RANDOM MESSAGE INJECTION (ChatGPT assisted with probability calculation)
+      // REQUIREMENT: Other messages (boss, family, etc.) appear randomly
       // ~3% per second -> roughly every 30 seconds on average
-      if (Math.random() < 0.03) {
+      // REQUIREMENT: Only inject messages when timer is running
+      if (running && Math.random() < 0.03) {
         const pool = STAGES[stageIndex].messages;
-        const pick = pool[Math.floor(Math.random() * pool.length)];
-        addMessage({
-          id: genId("auto"),
-          text: pick.text,
-          from: pick.from,
-          level: "info",
-          consequence: pick.consequence,
-        });
+        
+        // Filter to only non-coding messages (boss, family, docs, qa, etc.)
+        const nonCodingMessages = pool.filter(msg => 
+          !CODE_CHALLENGES.some(challenge => 
+            msg.text.toLowerCase().includes(challenge.messageKeyword.toLowerCase())
+          )
+        );
+        
+        if (nonCodingMessages.length > 0) {
+          const pick = nonCodingMessages[Math.floor(Math.random() * nonCodingMessages.length)];
+          
+          // Check if this message text has been resolved before
+          if (!resolvedMessageIds.has(pick.text)) {
+            addMessage({
+              id: genId("auto"),
+              text: pick.text,
+              from: pick.from,
+              level: "info",
+              consequence: pick.consequence,
+            });
+          }
+        }
       }
 
       // 2) ESCALATION ENGINE (VERY COMPLEX - ChatGPT assisted extensively)
       // Check existing messages for reminder/escalation
+      // REQUIREMENT: Only process escalations when timer is running
+      if (!running) return;
+      
       setMessages((prev) => {
         let changed = false;
         const nextMessages = prev.map((m) => {
@@ -541,7 +623,7 @@ export default function CourtRoom() {
         schedulerRef.current = null;
       }
     };
-  }, [stageIndex]); // Re-run if stageIndex changes (to pick up new stage message pool)
+  }, [stageIndex, resolvedMessageIds, running]); // Re-run if stageIndex, resolvedMessageIds, or running changes
 
   /* ------------------------
      Consequence overlay handler
@@ -622,6 +704,7 @@ export default function CourtRoom() {
     setSelectedMessageForDebug(messageId);
     setUserCode(challenge.brokenCode);
     setDebugFeedback(`Debug challenge: ${challenge.description}\nHint: ${challenge.hint}`);
+    setShowAnswer(false); // Reset show answer state
   }
 
   // COMPLEX VALIDATION FUNCTION (ChatGPT assisted with normalization algorithm)
@@ -679,6 +762,23 @@ export default function CourtRoom() {
     setSelectedMessageForDebug(null);
     setUserCode("");
     setDebugFeedback("");
+    setShowAnswer(false);
+  }
+
+  // Show the answer (solution code) to help the user
+  function showAnswerCode() {
+    if (!selectedMessageForDebug) return;
+    
+    const msg = messages.find((m) => m.id === selectedMessageForDebug);
+    if (!msg) return;
+
+    const challenge = getCodeChallenge(msg.text);
+    if (!challenge) return;
+
+    // Load solution into editor
+    setUserCode(challenge.solution);
+    setShowAnswer(true);
+    setDebugFeedback("✅ Answer shown. You can now submit this solution to resolve the issue.");
   }
 
   /* ------------------------
@@ -786,8 +886,9 @@ export default function CourtRoom() {
                                 - Only shows for messages with matching code challenges
                                 - Highlighted blue when actively debugging
                                 - Opens code editor in right panel
+                                - REQUIREMENT: Messages with code challenges can ONLY be resolved by debugging
                               */}
-                              {getCodeChallenge(m.text) && (
+                              {getCodeChallenge(m.text) ? (
                                 <button
                                   onClick={() => startDebugging(m.id)}
                                   style={{
@@ -801,14 +902,17 @@ export default function CourtRoom() {
                                 >
                                   {selectedMessageForDebug === m.id ? "Debugging..." : "Debug Code"}
                                 </button>
+                              ) : (
+                                /* Manual resolve only available for non-code messages */
+                                <button onClick={() => resolveMessage(m.id)} style={{ padding: "6px 8px", borderRadius: 6 }}>
+                                  Resolve
+                                </button>
                               )}
-                              {/* Manual resolve (skip debugging) */}
-                              <button onClick={() => resolveMessage(m.id)} style={{ padding: "6px 8px", borderRadius: 6 }}>
-                                Resolve
-                              </button>
                             </>
                           ) : (
-                            <div style={{ opacity: 0.7 }}>No actions</div>
+                            <div style={{ opacity: 0.7 }}>
+                              {m.resolved ? "✅ Resolved" : "No actions"}
+                            </div>
                           )}
                         </div>
                       </li>
@@ -912,12 +1016,25 @@ export default function CourtRoom() {
                 />
 
                 {/* Action buttons */}
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                   <button
                     onClick={validateAndResolve}
                     style={{ padding: "8px 12px", borderRadius: 6, background: "#2a7ade", color: "white", border: "none", cursor: "pointer" }}
                   >
                     Submit Fix
+                  </button>
+                  <button
+                    onClick={showAnswerCode}
+                    style={{ 
+                      padding: "8px 12px", 
+                      borderRadius: 6, 
+                      background: showAnswer ? "#4a9eff" : "#f59e0b",
+                      color: "white",
+                      border: "none",
+                      cursor: "pointer"
+                    }}
+                  >
+                    {showAnswer ? "Answer Shown" : "Show Answer"}
                   </button>
                   <button onClick={cancelDebugging} style={{ padding: "8px 12px", borderRadius: 6 }}>
                     Cancel
