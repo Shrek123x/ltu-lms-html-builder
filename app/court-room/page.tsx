@@ -1,5 +1,5 @@
 import Breadcrumbs from "../components/breadcrumbs";
-import CourtRoom from "./Courtroom";
+import CourtRoom from "./Courtroom.PRODUCTION";
 
 export default function CourtRoomPage() {
     return (
