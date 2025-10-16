@@ -1,25 +1,12 @@
 /**
  * AWS Lambda Function - HTML Generator with EC2 Database Integration
  * Fetches messages from EC2 API endpoint and generates HTML
- * 
- * Features:
- * - Test EC2 connectivity
- * - Fetch messages from EC2 API
- * - Generate HTML reports
- * - Support manual JSON input
  */
 
 exports.handler = async (event) => {
     console.log('Lambda invoked with event:', JSON.stringify(event));
-    const startTime = Date.now();
 
     try {
-        // Special Mode: Test EC2 Connectivity Only
-        if (event.testConnection) {
-            console.log('=== Testing EC2 Connectivity ===');
-            return await testEC2Connection(event);
-        }
-
         // Option 1: Use messages from event (manual invocation)
         let messages = event.messages || [];
         let theme = event.theme || 'light';
@@ -30,34 +17,13 @@ exports.handler = async (event) => {
             
             console.log('Fetching messages from EC2:', ec2ApiUrl);
             
-            // Test connection first
-            const connectionTest = await testEC2Connection({
-                ec2ApiUrl: ec2ApiUrl,
-                silent: true
-            });
-            
-            if (!connectionTest.success) {
-                console.error('EC2 connectivity test failed:', connectionTest.message);
-                return {
-                    statusCode: 503,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        error: 'EC2 instance not reachable',
-                        details: connectionTest.message,
-                        troubleshooting: connectionTest.troubleshooting
-                    })
-                };
-            }
-            
-            console.log('EC2 connectivity test passed:', connectionTest.message);
-            
             try {
                 const response = await fetch(ec2ApiUrl);
                 if (!response.ok) {
                     throw new Error(`EC2 API returned ${response.status}`);
                 }
                 messages = await response.json();
-                console.log(`Fetched ${messages.length} messages from EC2 (${connectionTest.responseTime}ms)`);
+                console.log(`Fetched ${messages.length} messages from EC2`);
             } catch (fetchError) {
                 console.error('Error fetching from EC2:', fetchError);
                 return {
@@ -65,8 +31,7 @@ exports.handler = async (event) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         error: 'Failed to fetch messages from EC2',
-                        details: fetchError.message,
-                        hint: 'EC2 instance may be down or API endpoint changed'
+                        details: fetchError.message 
                     })
                 };
             }
@@ -108,189 +73,6 @@ exports.handler = async (event) => {
         };
     }
 };
-
-/**
- * Test EC2 Connection
- * Tests if Lambda can reach the EC2 instance
- * 
- * @param {Object} event - Event object with ec2ApiUrl
- * @returns {Object} Connection test results
- */
-async function testEC2Connection(event) {
-    const ec2ApiUrl = event.ec2ApiUrl || process.env.EC2_API_URL || 'http://52.63.56.25:3000/api/messages';
-    const silent = event.silent || false;
-    
-    const result = {
-        success: false,
-        message: '',
-        ec2Url: ec2ApiUrl,
-        timestamp: new Date().toISOString(),
-        tests: {}
-    };
-    
-    if (!silent) {
-        console.log('Testing EC2 connectivity to:', ec2ApiUrl);
-    }
-    
-    try {
-        // Test 1: Basic HTTP connectivity
-        const startTime = Date.now();
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
-        
-        try {
-            const response = await fetch(ec2ApiUrl, {
-                signal: controller.signal,
-                headers: {
-                    'User-Agent': 'AWS-Lambda-Test'
-                }
-            });
-            clearTimeout(timeoutId);
-            
-            const responseTime = Date.now() - startTime;
-            result.responseTime = `${responseTime}ms`;
-            
-            result.tests.httpConnection = {
-                passed: true,
-                status: response.status,
-                statusText: response.statusText,
-                responseTime: responseTime
-            };
-            
-            // Test 2: Valid JSON response
-            if (response.ok) {
-                try {
-                    const data = await response.json();
-                    result.tests.jsonResponse = {
-                        passed: true,
-                        messageCount: Array.isArray(data) ? data.length : 0,
-                        dataType: Array.isArray(data) ? 'array' : typeof data
-                    };
-                    
-                    // Test 3: Data structure validation
-                    if (Array.isArray(data) && data.length > 0) {
-                        const firstMessage = data[0];
-                        const hasRequiredFields = 
-                            firstMessage.hasOwnProperty('id') &&
-                            firstMessage.hasOwnProperty('text') &&
-                            firstMessage.hasOwnProperty('level');
-                        
-                        result.tests.dataStructure = {
-                            passed: hasRequiredFields,
-                            sampleMessage: hasRequiredFields ? {
-                                id: firstMessage.id,
-                                text: firstMessage.text.substring(0, 50) + '...',
-                                level: firstMessage.level
-                            } : null
-                        };
-                        
-                        if (hasRequiredFields) {
-                            result.success = true;
-                            result.message = `EC2 is reachable and API is working correctly (${data.length} messages)`;
-                        } else {
-                            result.message = 'EC2 is reachable but data structure is invalid';
-                        }
-                    } else if (Array.isArray(data)) {
-                        result.success = true;
-                        result.message = 'EC2 is reachable but database is empty';
-                        result.tests.dataStructure = {
-                            passed: true,
-                            note: 'Empty database - no messages to validate'
-                        };
-                    } else {
-                        result.message = 'EC2 responded but data is not an array';
-                    }
-                    
-                } catch (jsonError) {
-                    result.tests.jsonResponse = {
-                        passed: false,
-                        error: 'Response is not valid JSON'
-                    };
-                    result.message = 'EC2 is reachable but response is not valid JSON';
-                }
-            } else {
-                result.message = `EC2 responded with error status: ${response.status}`;
-            }
-            
-        } catch (fetchError) {
-            clearTimeout(timeoutId);
-            
-            if (fetchError.name === 'AbortError') {
-                result.tests.httpConnection = {
-                    passed: false,
-                    error: 'Request timeout (>5 seconds)'
-                };
-                result.message = 'EC2 connection timeout - instance may be overloaded or down';
-                result.troubleshooting = [
-                    'Check if EC2 instance is running (AWS Console)',
-                    'Verify Docker container is running: docker ps',
-                    'Check EC2 logs: docker logs ltu-app',
-                    'Test locally on EC2: curl http://localhost:3000/api/messages',
-                    'Increase Lambda timeout to 30 seconds'
-                ];
-            } else if (fetchError.message.includes('ECONNREFUSED')) {
-                result.tests.httpConnection = {
-                    passed: false,
-                    error: 'Connection refused'
-                };
-                result.message = 'EC2 refused connection - Docker container may not be running';
-                result.troubleshooting = [
-                    'SSH to EC2 and run: docker ps',
-                    'Start container if stopped: docker start ltu-app',
-                    'Check security group allows port 3000',
-                    'Verify app is listening on 0.0.0.0:3000'
-                ];
-            } else if (fetchError.message.includes('ENOTFOUND') || fetchError.message.includes('getaddrinfo')) {
-                result.tests.httpConnection = {
-                    passed: false,
-                    error: 'Host not found'
-                };
-                result.message = 'Cannot resolve EC2 hostname - check IP address';
-                result.troubleshooting = [
-                    'Verify EC2 public IP is correct',
-                    'Check if EC2 instance is running',
-                    'Ensure EC2 has a public IP assigned'
-                ];
-            } else {
-                result.tests.httpConnection = {
-                    passed: false,
-                    error: fetchError.message
-                };
-                result.message = `Connection failed: ${fetchError.message}`;
-                result.troubleshooting = [
-                    'Check EC2 security group allows inbound on port 3000 from 0.0.0.0/0',
-                    'Verify EC2 instance is running',
-                    'Check Docker container: docker ps',
-                    'Test API locally: curl http://localhost:3000/api/messages'
-                ];
-            }
-        }
-        
-    } catch (error) {
-        result.message = `Unexpected error: ${error.message}`;
-        result.troubleshooting = [
-            'Check Lambda CloudWatch logs for details',
-            'Verify Lambda has internet access',
-            'Increase Lambda timeout if needed'
-        ];
-    }
-    
-    // Return detailed results if not in silent mode
-    if (!silent) {
-        console.log('EC2 Connection Test Results:', JSON.stringify(result, null, 2));
-        
-        return {
-            statusCode: result.success ? 200 : 503,
-            headers: { 
-                'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
-            },
-            body: JSON.stringify(result, null, 2)
-        };
-    }
-    
-    return result;
-}
 
 /**
  * Generate HTML from messages
