@@ -100,6 +100,7 @@ type Message = {
   nextRemindAt?: number;      // Timestamp (ms) when next reminder should fire
   courtAt?: number;           // Timestamp (ms) when court overlay should appear
   consequence?: ConsequenceType; // What happens if ignored (accessibility/tort/bankruptcy)
+  duplicateCount?: number;    // How many times this same message has appeared
 };
 
 // TIMING CONSTANTS - Configurable intervals for production
@@ -394,27 +395,41 @@ export default function CourtRoom() {
      ------------------------ */
 
   // COMPLEX FUNCTION (ChatGPT assisted with deduplication logic)
-  // Adds message, dedupes by id, and schedules initial nextRemindAt using current stage's interval
-  // Why complex: Merges new message data, removes duplicates, applies stage-specific timing
+  // Adds message, dedupes by id, counts duplicates, and schedules initial nextRemindAt using current stage's interval
+  // REQUIREMENT: Count when same debug message appears multiple times
+  // Why complex: Merges new message data, removes duplicates, applies stage-specific timing, tracks duplicate count
   function addMessage(msg: Omit<Message, "timestamp"> & Partial<Pick<Message, "timestamp">>) {
     const stage = STAGES[stageIndex];
     const min = stage.reminderMinMs ?? DEMO_REMIND_MIN_MS;
     const max = stage.reminderMaxMs ?? DEMO_REMIND_MAX_MS;
 
-    // Build complete message object with defaults
-    const m: Message = {
-      id: msg.id || genId("msg"),
-      text: msg.text,
-      from: msg.from ?? "system",
-      level: msg.level ?? "info",
-      timestamp: msg.timestamp ?? Date.now(),
-      resolved: msg.resolved ?? false,
-      escalations: msg.escalations ?? 0,
-      nextRemindAt: Date.now() + randBetween(min, max), // Schedule first reminder
-      consequence: msg.consequence ?? "none",
-    };
-
     setMessages((prev) => {
+      // Check if a message with the same text already exists (unresolved)
+      const existingMessage = prev.find((x) => x.text === msg.text && !x.resolved);
+      
+      if (existingMessage) {
+        // DUPLICATE DETECTED: Increment count instead of creating new message
+        return prev.map((x) => 
+          x.id === existingMessage.id 
+            ? { ...x, duplicateCount: (x.duplicateCount ?? 1) + 1, timestamp: Date.now() }
+            : x
+        );
+      }
+
+      // Build complete message object with defaults (new message)
+      const m: Message = {
+        id: msg.id || genId("msg"),
+        text: msg.text,
+        from: msg.from ?? "system",
+        level: msg.level ?? "info",
+        timestamp: msg.timestamp ?? Date.now(),
+        resolved: msg.resolved ?? false,
+        escalations: msg.escalations ?? 0,
+        nextRemindAt: Date.now() + randBetween(min, max), // Schedule first reminder
+        consequence: msg.consequence ?? "none",
+        duplicateCount: 1, // Initialize duplicate count
+      };
+
       // DEDUPLICATION: Remove any existing message with same id before adding
       // Why: Prevents duplicate React keys and ensures each message appears once
       const filtered = prev.filter((x) => x.id !== m.id);
@@ -433,6 +448,61 @@ export default function CourtRoom() {
       }
       return m;
     }));
+  }
+
+  /* ------------------------
+     Database persistence
+     REQUIREMENT: Add a save button that saves output to database
+     ------------------------ */
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [saveStatus, setSaveStatus] = useState<string>("");
+
+  // Save a single message to the database
+  async function saveMessageToDatabase(message: Message) {
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: message.text,
+          from: message.from,
+          level: message.level,
+          timestamp: message.timestamp,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save message');
+      }
+
+      const savedMessage = await response.json();
+      return savedMessage;
+    } catch (error) {
+      console.error('Error saving message:', error);
+      throw error;
+    }
+  }
+
+  // Save all current messages to database
+  async function saveAllMessages() {
+    setIsSaving(true);
+    setSaveStatus("Saving...");
+    
+    try {
+      let savedCount = 0;
+      for (const message of messages) {
+        await saveMessageToDatabase(message);
+        savedCount++;
+      }
+      
+      setSaveStatus(`✅ Successfully saved ${savedCount} message${savedCount !== 1 ? 's' : ''}`);
+      setTimeout(() => setSaveStatus(""), 3000);
+    } catch (error) {
+      setSaveStatus("❌ Error saving messages");
+      setTimeout(() => setSaveStatus(""), 3000);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   /* ------------------------
@@ -583,9 +653,17 @@ export default function CourtRoom() {
           const escalations = (m.escalations ?? 0) + 1;
 
           // FIRST ESCALATION: info → warning, schedule next reminder in 2 min
+          // REQUIREMENT: Message text changes to show urgency (e.g., "urgent fix input validation")
           if (escalations === 1) {
+            // Prepend "urgent" to message text if it's a coding challenge
+            const isCodeChallenge = getCodeChallenge(m.text) !== null;
+            const updatedText = isCodeChallenge && !m.text.toLowerCase().startsWith("urgent") 
+              ? `urgent ${m.text}`
+              : m.text;
+            
             const updated: Message = {
               ...m,
+              text: updatedText,
               level: "warning",
               escalations,
               nextRemindAt: now + ESCALATE_WAIT_MS, // 2 minutes from now
@@ -643,14 +721,22 @@ export default function CourtRoom() {
         });
         break;
       case "tort":
-      case "hacked":
-        // REQUIREMENT: "fix input validation" or "Fix Secure Database" → if ignored → court for Laws of Tort
-        // Explanation: You knew there was a security issue and didn't fix it, leading to harm/hacking
+        // REQUIREMENT: "fix input validation" → if ignored → court for Laws of Tort (got hacked, you knew and didn't fix)
         setOverlay({
           show: true,
           title: "Court of Law - Laws of Tort",
-          body: `A critical security or validation issue ("${m.text}") was not fixed and led to failure/harm. Legal action: Laws of Tort.`,
+          body: `You have been hacked! A critical security or validation issue ("${m.text}") was not fixed. You knew about the problem and didn't fix it, leading to a security breach. Legal action: Laws of Tort.`,
           type: "tort",
+          disableApp: false,
+        });
+        break;
+      case "hacked":
+        // REQUIREMENT: "Fix Secure Database" → got hacked → court for Laws of Tort
+        setOverlay({
+          show: true,
+          title: "Court of Law - Laws of Tort",
+          body: `Your database was hacked! The issue "${m.text}" was not fixed in time. You knew about the vulnerability and didn't secure it, resulting in a data breach. Legal action: Laws of Tort.`,
+          type: "hacked",
           disableApp: false,
         });
         break;
@@ -659,7 +745,7 @@ export default function CourtRoom() {
         setOverlay({
           show: true,
           title: "Bankruptcy Notice",
-          body: `Failure to fix "${m.text}" caused loss of revenue / trust — declared bankruptcy. The app is disabled.`,
+          body: `Failure to fix "${m.text}" has resulted in bankruptcy! No one can use your app due to login issues. You don't get paid and the business has collapsed. The app is now disabled.`,
           type: "bankruptcy",
           disableApp: true, // SPECIAL: disable app controls to simulate business collapse
         });
@@ -685,8 +771,10 @@ export default function CourtRoom() {
 
   // Find the code challenge that matches a message
   // Uses case-insensitive substring search to match message text to challenge keyword
+  // NOTE: Strips "urgent" prefix when matching to handle escalated messages
   function getCodeChallenge(messageText: string): CodeChallenge | null {
-    return CODE_CHALLENGES.find((c) => messageText.toLowerCase().includes(c.messageKeyword.toLowerCase())) ?? null;
+    const normalizedText = messageText.toLowerCase().replace(/^urgent\s+/, "");
+    return CODE_CHALLENGES.find((c) => normalizedText.includes(c.messageKeyword.toLowerCase())) ?? null;
   }
 
   // Start debugging a message: load the broken code into the editor
@@ -869,6 +957,11 @@ export default function CourtRoom() {
                         <div style={{ display: "flex", justifyContent: "space-between" }}>
                           <div>
                             <strong style={{ textTransform: "capitalize" }}>{m.from}</strong>: {m.text}
+                            {(m.duplicateCount ?? 1) > 1 && (
+                              <span style={{ marginLeft: 8, padding: "2px 6px", background: "rgba(255,140,0,0.3)", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
+                                ×{m.duplicateCount}
+                              </span>
+                            )}
                             <div style={{ fontSize: 12, opacity: 0.8 }}>{m.level.toUpperCase()} • {new Date(m.timestamp).toLocaleTimeString()}</div>
                           </div>
 
@@ -958,6 +1051,34 @@ export default function CourtRoom() {
 
               <div style={{ fontSize: 18, fontWeight: 600 }}>{formatTime(timerSeconds)}</div>
               <div style={{ opacity: 0.8, fontSize: 13 }}>{running ? "Running" : "Stopped"}</div>
+              
+              {/* 
+                SAVE TO DATABASE BUTTON
+                REQUIREMENT: Add a save button that saves output to Prisma Database
+              */}
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                <button 
+                  onClick={saveAllMessages} 
+                  disabled={isSaving || messages.length === 0 || appDisabled}
+                  style={{ 
+                    padding: "10px 16px", 
+                    borderRadius: 6, 
+                    background: isSaving ? "#666" : "#28a745",
+                    color: "white",
+                    border: "none",
+                    cursor: messages.length === 0 || isSaving ? "not-allowed" : "pointer",
+                    width: "100%",
+                    fontWeight: 600
+                  }}
+                >
+                  {isSaving ? "Saving..." : `💾 Save ${messages.length} Message${messages.length !== 1 ? 's' : ''}`}
+                </button>
+                {saveStatus && (
+                  <div style={{ marginTop: 8, fontSize: 12, textAlign: "center", fontWeight: 600 }}>
+                    {saveStatus}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 

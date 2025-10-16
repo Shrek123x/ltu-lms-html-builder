@@ -1,0 +1,13 @@
+{
+  "name": "ltu-lms-lambda-html-generator",
+  "version": "1.0.0",
+  "description": "AWS Lambda function to generate dynamic HTML pages",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test-local.js",
+    "package": "zip -r function.zip index.js node_modules package.json"
+  },
+  "keywords": ["aws", "lambda", "html", "generator"],
+  "author": "LTU",
+  "license": "MIT"
+}
